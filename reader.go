@@ -29,13 +29,23 @@ const (
 	MSB
 )
 
+// Keep in mind these constraints before modifying the constants defined below.
+//
+// - ctlWidth must be a multiple of 8 in the current implementation.
+//
+// - offsetWidth + sizeWidth should add up to 16. This can be easily mitigate to
+// "multiple of 8" case by modifying the ctl & 0x80 != 0 in decode() to read
+// more/less than 2 bytes.
 const (
 	ctlWidth    = 8
 	offsetWidth = 12 // number of bits used for relative offset
-	windowSize  = 1 << offsetWidth
-	flushBuffer = 2 * windowSize
 	sizeWidth   = 4 // number of bits used for chunk size
 	threshold   = 2
+)
+
+const (
+	windowSize  = 1 << offsetWidth
+	flushBuffer = 2 * windowSize
 	maxBytes    = threshold + 1<<sizeWidth // maximum bytes in a single copy
 	maxDecode   = ctlWidth * maxBytes // maximum bytes output by one round of decode
 )
