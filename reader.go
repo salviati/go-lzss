@@ -9,12 +9,10 @@
 // Package lzss implements the Lempel-Ziv-Storer-Szymanski compressed
 // data format, described in J. A. Storer, ``Data compression via
 // textual substitution'', Journal of the ACM 29(4) (October 1984),
-// (pp. 928-951).
+// (pp 928-951).
 //
 // The code is based on Go's compress/lzs/reader.go.
 package lzss
-
-// TODO(utkan): implelement the encoder.
 
 import (
 	"bufio"
@@ -56,6 +54,7 @@ const (
 // If decoder should simply copy a single byte in
 // this round, this should return true.
 // Otherwise, false.
+// See decode for details.
 type CtlFuncType func(byte, uint) bool
 
 // CodeFunc extracts size (chunk size) and relOff (relative offset)
@@ -65,7 +64,8 @@ type CtlFuncType func(byte, uint) bool
 // decoder will then copy size + threshold + 1 bytes
 // starting from d.output[d.o-relOff-1].
 // Note that d.output[d.o-1] is the last byte
-// written by the decoder in the previous step,
+// written by the decoder in the previous step.
+// See decode for details.
 type CodeFuncType func([]byte, Order) (int, int)
 
 type decoder struct {
