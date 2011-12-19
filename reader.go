@@ -33,7 +33,7 @@ const (
 //
 // - ctlWidth must be a multiple of 8 in the current implementation.
 //
-// - offsetWidth + sizeWidth should add up to 16. This can be easily mitigate to
+// - offsetWidth + sizeWidth should add up to 16. This can be easily mitigated to
 // "multiple of 8" case by modifying the ctl & 0x80 != 0 in decode() to read
 // more/less than 2 bytes.
 const (
