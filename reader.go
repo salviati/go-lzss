@@ -35,8 +35,9 @@ const (
 	windowSize  = 1 << offsetWidth
 	flushBuffer = 2 * windowSize
 	sizeWidth   = 4 // number of bits used for chunk size
-	threshold   = 3
-	maxDecode   = ctlWidth * (threshold + 1<<sizeWidth) // maximum bytes output by one round of decode
+	threshold   = 2
+	maxBytes    = threshold + 1<<sizeWidth // maximum bytes in a single copy
+	maxDecode   = ctlWidth * maxBytes // maximum bytes output by one round of decode
 )
 
 type decoder struct {
@@ -127,7 +128,7 @@ func (d *decoder) decode() {
 
 			code := (uint16(hi) << 8) | uint16(lo)
 
-			n := int(code&(1<<sizeWidth-1) + threshold)
+			n := int(code&(1<<sizeWidth-1) + threshold + 1)
 			relOff := int(code>>4 + 1)
 
 			pos := d.o - relOff
