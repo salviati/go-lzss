@@ -48,11 +48,25 @@ const (
 	windowSize  = 1 << offsetWidth
 	flushBuffer = 2 * windowSize
 	maxBytes    = threshold + 1<<sizeWidth // maximum bytes in a single copy
-	maxDecode   = ctlWidth * maxBytes      // maximum bytes output by one round of decode
+	maxDecode   = ctlWidth * maxBytes      // maximum bytes output by decode in a single call
 )
 
-type ctlFuncType func(byte, uint) bool
-type codeFuncType func([]byte, Order) (int, int)
+// CtlFunc takes ctl (control) byte and
+// pos (current round) as parameters.
+// If decoder should simply copy a single byte in
+// this round, this should return true.
+// Otherwise, false.
+type CtlFuncType func(byte, uint) bool
+
+// CodeFunc extracts size (chunk size) and relOff (relative offset)
+// from code bytes. Array has the same ordering
+// as the file/stream. Reqested byte ordering is available
+// through parameter.
+// decoder will then copy size + threshold + 1 bytes
+// starting from d.output[d.o-relOff-1].
+// Note that d.output[d.o-1] is the last byte
+// written by the decoder in the previous step,
+type CodeFuncType func([]byte, Order) (int, int)
 
 type decoder struct {
 	r     io.ByteReader
@@ -66,8 +80,8 @@ type decoder struct {
 	o      int    // write index into output
 	toRead []byte // bytes to return from Read
 
-	ctlFunc  ctlFuncType
-	codeFunc codeFuncType
+	ctlFunc  CtlFuncType
+	codeFunc CodeFuncType
 }
 
 func (d *decoder) Read(b []byte) (int, error) {
@@ -193,7 +207,7 @@ func (d *decoder) Close() error {
 // It is the caller's responsibility to call Close on the ReadCloser when
 // finished reading.
 // ctlFunc and codeFunc are ordinarily nil.
-func NewReader(r io.Reader, order Order, ctlFunc ctlFuncType, codeFunc codeFuncType) io.ReadCloser {
+func NewReader(r io.Reader, order Order, ctlFunc CtlFuncType, codeFunc CodeFuncType) io.ReadCloser {
 	d := new(decoder)
 
 	if order != LSB && order != MSB {
