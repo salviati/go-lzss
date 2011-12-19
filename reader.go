@@ -33,22 +33,26 @@ const (
 //
 // - ctlWidth must be a multiple of 8 in the current implementation.
 //
-// - offsetWidth + sizeWidth should add up to 16. This can be easily mitigated to
-// "multiple of 8" case by modifying the ctl & 0x80 != 0 in decode() to read
+// - offsetWidth + sizeWidth should add up to 8*codeWidth. This can be easily mitigated to
+// "multiple of 8" case by modifying the codeFuncDefault to read
 // more/less than 2 bytes.
 const (
 	ctlWidth    = 8
 	offsetWidth = 12 // number of bits used for relative offset
-	sizeWidth   = 4 // number of bits used for chunk size
+	sizeWidth   = 4  // number of bits used for chunk size
 	threshold   = 2
+	codeSize    = 2 // number of bytes used for a code
 )
 
 const (
 	windowSize  = 1 << offsetWidth
 	flushBuffer = 2 * windowSize
 	maxBytes    = threshold + 1<<sizeWidth // maximum bytes in a single copy
-	maxDecode   = ctlWidth * maxBytes // maximum bytes output by one round of decode
+	maxDecode   = ctlWidth * maxBytes      // maximum bytes output by one round of decode
 )
+
+type ctlFuncType func(byte, uint) (bool)
+type codeFuncType func([]byte, Order) (int,int)
 
 type decoder struct {
 	r     io.ByteReader
@@ -61,6 +65,9 @@ type decoder struct {
 	output [flushBuffer + maxDecode]byte
 	o      int    // write index into output
 	toRead []byte // bytes to return from Read
+
+	ctlFunc ctlFuncType
+	codeFunc codeFuncType
 }
 
 func (d *decoder) Read(b []byte) (int, error) {
@@ -76,6 +83,28 @@ func (d *decoder) Read(b []byte) (int, error) {
 		d.decode()
 	}
 	panic("unreachable")
+}
+
+func ctlFuncDefault(ctl byte, pos uint) (readOne bool) {
+	return ctl << pos & 0x80 == 0
+}
+
+func codeFuncDefault(b []byte, order Order) (size, relOff int) {
+	var lo, hi byte
+
+	if order == LSB {
+		lo = b[0]
+		hi = b[1]
+	} else {
+		hi = b[0]
+		lo = b[1]
+	}
+
+	code := (uint16(hi) << 8) | uint16(lo)
+
+	size = int(code&(1<<sizeWidth-1) + threshold + 1)
+	relOff = int(code>>4 + 1)
+	return
 }
 
 // decode decompresses bytes from r and leaves them in d.toRead.
@@ -113,33 +142,23 @@ func (d *decoder) decode() {
 		return
 	}
 
-	for i := 0; i < ctlWidth; i++ {
-		if ctl&0x80 == 0 {
+	for i := uint(0); i < ctlWidth; i++ {
+		if d.ctlFunc(ctl,i) {
 			d.output[d.o], d.err = d.r.ReadByte()
 			if d.err != nil {
 				return
 			}
 			d.o++
 		} else {
-			var lo, hi byte
+			code := make([]byte, codeSize)
 
-			lo, d.err = d.r.ReadByte()
-			if d.err != nil {
-				return
-			}
-			hi, d.err = d.r.ReadByte()
-			if d.err != nil {
-				return
+			for i:=0; i<len(code); i++ {
+				if code[i], d.err = d.r.ReadByte(); d.err != nil {
+					return
+				}
 			}
 
-			if d.order == MSB {
-				lo, hi = hi, lo
-			}
-
-			code := (uint16(hi) << 8) | uint16(lo)
-
-			n := int(code&(1<<sizeWidth-1) + threshold + 1)
-			relOff := int(code>>4 + 1)
+			n, relOff := d.codeFunc(code, d.order)
 
 			pos := d.o - relOff
 			if pos < 0 { // would never happen with a valid input.
@@ -149,8 +168,6 @@ func (d *decoder) decode() {
 			copy(d.output[d.o:d.o+n], d.output[pos:pos+n])
 			d.o += n
 		}
-
-		ctl <<= 1
 	}
 }
 
@@ -170,7 +187,8 @@ func (d *decoder) Close() error {
 // the data read from r.
 // It is the caller's responsibility to call Close on the ReadCloser when
 // finished reading.
-func NewReader(r io.Reader, order Order) io.ReadCloser {
+// ctlFunc and codeFunc are ordinarily nil.
+func NewReader(r io.Reader, order Order, ctlFunc ctlFuncType, codeFunc codeFuncType) io.ReadCloser {
 	d := new(decoder)
 
 	if order != LSB && order != MSB {
@@ -178,7 +196,17 @@ func NewReader(r io.Reader, order Order) io.ReadCloser {
 		return d
 	}
 
+	if ctlFunc == nil {
+		ctlFunc = ctlFuncDefault
+	}
+
+	if codeFunc == nil {
+		codeFunc = codeFuncDefault
+	}
+
 	d.order = order
+	d.ctlFunc = ctlFunc
+	d.codeFunc = codeFunc
 
 	if br, ok := r.(io.ByteReader); ok {
 		d.r = br
