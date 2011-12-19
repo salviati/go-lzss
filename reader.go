@@ -102,7 +102,7 @@ func codeFuncDefault(b []byte, order Order) (size, relOff int) {
 
 	code := (uint16(hi) << 8) | uint16(lo)
 
-	size = int(code&(1<<sizeWidth-1) + threshold + 1)
+	size = int(code&(1<<sizeWidth-1))
 	relOff = int(code>>4)
 	return
 }
@@ -164,6 +164,7 @@ func (d *decoder) decode() {
 				return
 			}
 
+			n += threshold + 1
 			pos := d.o - relOff - 1
 			if relOff < 0 || pos < 0 { // would never happen with a valid input.
 				d.err = errors.New("lzss: relative offset out of bounds")
