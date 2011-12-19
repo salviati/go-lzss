@@ -132,7 +132,7 @@ func (d *decoder) decode() {
 
 			pos := d.o - relOff
 			if pos < 0 { // would never happen with a valid input.
-				d.err = errors.New("lzss: out of bounds")
+				d.err = errors.New("lzss: relative offset out of bounds")
 				return
 			}
 			copy(d.output[d.o:d.o+n], d.output[pos:pos+n])
