@@ -51,8 +51,8 @@ const (
 	maxDecode   = ctlWidth * maxBytes      // maximum bytes output by one round of decode
 )
 
-type ctlFuncType func(byte, uint) (bool)
-type codeFuncType func([]byte, Order) (int,int)
+type ctlFuncType func(byte, uint) bool
+type codeFuncType func([]byte, Order) (int, int)
 
 type decoder struct {
 	r     io.ByteReader
@@ -66,7 +66,7 @@ type decoder struct {
 	o      int    // write index into output
 	toRead []byte // bytes to return from Read
 
-	ctlFunc ctlFuncType
+	ctlFunc  ctlFuncType
 	codeFunc codeFuncType
 }
 
@@ -86,7 +86,7 @@ func (d *decoder) Read(b []byte) (int, error) {
 }
 
 func ctlFuncDefault(ctl byte, pos uint) (readOne bool) {
-	return ctl << pos & 0x80 == 0
+	return ctl<<pos&0x80 == 0
 }
 
 func codeFuncDefault(b []byte, order Order) (size, relOff int) {
@@ -103,7 +103,7 @@ func codeFuncDefault(b []byte, order Order) (size, relOff int) {
 	code := (uint16(hi) << 8) | uint16(lo)
 
 	size = int(code&(1<<sizeWidth-1) + threshold + 1)
-	relOff = int(code>>4 + 1)
+	relOff = int(code>>4)
 	return
 }
 
@@ -143,7 +143,7 @@ func (d *decoder) decode() {
 	}
 
 	for i := uint(0); i < ctlWidth; i++ {
-		if d.ctlFunc(ctl,i) {
+		if d.ctlFunc(ctl, i) {
 			d.output[d.o], d.err = d.r.ReadByte()
 			if d.err != nil {
 				return
@@ -152,16 +152,20 @@ func (d *decoder) decode() {
 		} else {
 			code := make([]byte, codeSize)
 
-			for i:=0; i<len(code); i++ {
+			for i := 0; i < len(code); i++ {
 				if code[i], d.err = d.r.ReadByte(); d.err != nil {
 					return
 				}
 			}
 
 			n, relOff := d.codeFunc(code, d.order)
+			if n < 0 {
+				d.err = errors.New("lzss: invalid chunk size")
+				return
+			}
 
-			pos := d.o - relOff
-			if pos < 0 { // would never happen with a valid input.
+			pos := d.o - relOff - 1
+			if relOff < 0 || pos < 0 { // would never happen with a valid input.
 				d.err = errors.New("lzss: relative offset out of bounds")
 				return
 			}
