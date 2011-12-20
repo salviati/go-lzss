@@ -11,7 +11,7 @@
 // textual substitution'', Journal of the ACM 29(4) (October 1984),
 // (pp 928-951).
 //
-// The code is based on Go's compress/lzs/reader.go.
+// The code is based on Go's compress/lzw/reader.go.
 package lzss
 
 import (
