@@ -103,15 +103,15 @@ func DefaultFlagFunc(flags byte, pos uint) (literal bool) {
 // Default functions use a format that is compatible with
 // Nintendo GBA's BIOS (for LSB case), except this package assumes no header.
 // See http://nocash.emubase.de/gbatek.htm#biosdecompressionfunctions for more.
-func DefaultReferenceFunc(ref []byte, order Order) (length, offset int) {
+func DefaultReferenceFunc(refBytes []byte, order Order) (length, offset int) {
 	var lo, hi byte
 
 	if order == LSB {
-		lo = ref[0]
-		hi = ref[1]
+		lo = refBytes[0]
+		hi = refBytes[1]
 	} else {
-		hi = ref[0]
-		lo = ref[1]
+		hi = refBytes[0]
+		lo = refBytes[1]
 	}
 
 	ref := (uint16(hi) << 8) | uint16(lo)
@@ -207,7 +207,7 @@ func (d *decoder) Close() error {
 // finished reading.
 // Threshold can't be smaller than ThresholdMin, and is typically 3.
 // If you pass DefaultReferenceFunc as referenceFunc, threshold must be set to DefaultThreshold.
-func NewReader(r io.Reader, order Order, flagFunc FlagFuncType, referenceFunc ReferenceFuncType, threshold int) io.ReadCloser {
+func NewCustomReader(r io.Reader, order Order, flagFunc FlagFuncType, referenceFunc ReferenceFuncType, threshold int) io.ReadCloser {
 	d := new(decoder)
 
 	if order != LSB && order != MSB {
@@ -243,6 +243,6 @@ func NewReader(r io.Reader, order Order, flagFunc FlagFuncType, referenceFunc Re
 	return d
 }
 
-func NewDefaultReader(r io.Reader, order Order) {
-	return NewReader(r, order, DefaultFlagFunc, DefaultReferenceFunc, DefaultThreshold)
+func NewReader(r io.Reader, order Order) io.ReadCloser {
+	return NewCustomReader(r, order, DefaultFlagFunc, DefaultReferenceFunc, DefaultThreshold)
 }
