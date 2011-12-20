@@ -27,60 +27,58 @@ const (
 	MSB
 )
 
-// Keep in mind these constraints before modifying the constants defined below.
-//
-// - CtlWidth must be a multiple of 8 in the current implementation.
-//
-// - OffsetWidth + SizeWidth should add up to 8*CodeSize. This can be easily mitigated to
-// "multiple of 8" case by modifying the codeFuncDefault to read
-// more/less than 2 bytes.
+// Keep in mind that NFlags and NOffsetBits + NLengthBits
+// must be a multiple of 8 in the current implementation.
 const (
-	CtlWidth    = 8  // number of control bits
-	OffsetWidth = 12 // number of bits used for relative offset
-	SizeWidth   = 4  // number of bits used for additional chunk (dictionary match) size
-	CodeSize    = 2  // number of bytes used for a code
+	NFlags      = 8  // number of sequential flag bits
+	NOffsetBits = 12 // number of bits used for relative offset
+	NLengthBits = 4  // number of bits used to denote the referred chunk length
 )
 
 const (
-	windowSize   = 1 << OffsetWidth
-	flushBuffer  = 2 * windowSize
-	thresholdMin = CodeSize + CtlWidth/8 // Assuming that CtlWidth is a multiple of 8
+	NReferenceBytes  = (NOffsetBits + NFlags) / 8 // number of total bytes a reference is made of (ie, offset and length pair)
+	ThresholdMin     = NReferenceBytes + NFlags/8
+	DefaultThreshold = ThresholdMin
 )
 
-// CtlFunc takes ctl (control) byte and
-// pos (current round) as parameters.
+const (
+	windowLength = 1 << NOffsetBits
+	flushBuffer  = 2 * windowLength
+)
+
+// FlagFunc takes the bit-vector of sequential flags and
+// pos (number of flags used up until now) as parameters.
 // If decoder should simply copy a single byte in
-// this round, this should return true.
+// this round (literal), this should return true.
 // Otherwise, false.
 // See decode for details.
-type CtlFuncType func(byte, uint) bool
+type FlagFuncType func(byte, uint) bool
 
-// CodeFunc extracts size (chunk size) and relOff (relative offset)
-// from code bytes. Array has the same ordering
+// RefFunc extracts chunk length and relative offset pair
+// from given reference bytes. Array has the same ordering
 // as the file/stream. Reqested byte ordering is available
 // through parameter.
-// decoder will then copy size + threshold bytes
-// starting from d.output[d.o-relOff-1].
+// decoder will then copy length + threshold bytes
+// starting from d.output[(d.o-1)-offset].
 // Note that d.output[d.o-1] is the last byte
 // written by the decoder in the previous step.
-// See decode for details.
-type CodeFuncType func([]byte, Order) (int, int)
+// See decode in the source file for details.
+type ReferenceFuncType func([]byte, Order) (int, int)
 
 type decoder struct {
 	r     io.ByteReader
 	order Order
 	err   error
 	// output is the temporary output buffer.
-	// Literal codes are accumulated from the start of the buffer.
 	// It is flushed when it contains >= flushBuffer bytes,
 	// so that there is always room to decode an entire code.
 	output []byte
 	o      int    // write index into output
 	toRead []byte // bytes to return from Read
 
-	threshold int // minimum number of bytes in a chunk
-	ctlFunc   CtlFuncType
-	codeFunc  CodeFuncType
+	threshold     int // minimum number of bytes in a chunk
+	flagFunc      FlagFuncType
+	referenceFunc ReferenceFuncType
 }
 
 func (d *decoder) Read(b []byte) (int, error) {
@@ -98,27 +96,28 @@ func (d *decoder) Read(b []byte) (int, error) {
 	panic("unreachable")
 }
 
-// The default functions use the format compatible with
-// Nintendo GBA's BIOS.
-func ctlFuncDefault(ctl byte, pos uint) (readOne bool) {
-	return ctl<<pos&0x80 == 0
+func DefaultFlagFunc(flags byte, pos uint) (literal bool) {
+	return flags<<pos&0x80 == 0
 }
 
-func codeFuncDefault(b []byte, order Order) (size, relOff int) {
+// Default functions use a format that is compatible with
+// Nintendo GBA's BIOS (for LSB case), except this package assumes no header.
+// See http://nocash.emubase.de/gbatek.htm#biosdecompressionfunctions for more.
+func DefaultReferenceFunc(ref []byte, order Order) (length, offset int) {
 	var lo, hi byte
 
 	if order == LSB {
-		lo = b[0]
-		hi = b[1]
+		lo = ref[0]
+		hi = ref[1]
 	} else {
-		hi = b[0]
-		lo = b[1]
+		hi = ref[0]
+		lo = ref[1]
 	}
 
-	code := (uint16(hi) << 8) | uint16(lo)
+	ref := (uint16(hi) << 8) | uint16(lo)
 
-	size = int(code & (1<<SizeWidth - 1))
-	relOff = int(code >> 4)
+	length = int(ref & (1<<NLengthBits - 1))
+	offset = int(ref >> NLengthBits)
 	return
 }
 
@@ -134,7 +133,7 @@ func (d *decoder) decode() {
 		}
 	}()
 
-	ctl, err := d.r.ReadByte()
+	flags, err := d.r.ReadByte()
 	if err == io.EOF {
 		d.flush()
 		return
@@ -145,8 +144,8 @@ func (d *decoder) decode() {
 	}
 
 	// optimize a special case of the loop below
-	if ctl == 0 {
-		for i := 0; i < CtlWidth; i++ {
+	if flags == 0 {
+		for i := 0; i < NFlags; i++ {
 			d.output[d.o], d.err = d.r.ReadByte()
 			if d.err != nil {
 				return
@@ -156,31 +155,31 @@ func (d *decoder) decode() {
 		return
 	}
 
-	for i := uint(0); i < CtlWidth; i++ {
-		if d.ctlFunc(ctl, i) {
+	for i := uint(0); i < NFlags; i++ {
+		if d.flagFunc(flags, i) {
 			d.output[d.o], d.err = d.r.ReadByte()
 			if d.err != nil {
 				return
 			}
 			d.o++
 		} else {
-			code := make([]byte, CodeSize)
+			ref := make([]byte, NReferenceBytes)
 
-			for i := 0; i < len(code); i++ {
-				if code[i], d.err = d.r.ReadByte(); d.err != nil {
+			for i := 0; i < len(ref); i++ {
+				if ref[i], d.err = d.r.ReadByte(); d.err != nil {
 					return
 				}
 			}
 
-			n, relOff := d.codeFunc(code, d.order)
+			n, offset := d.referenceFunc(ref, d.order)
 			if n < 0 {
-				d.err = errors.New("lzss: invalid chunk size")
+				d.err = errors.New("lzss: invalid chunk length")
 				return
 			}
 
 			n += d.threshold
-			pos := (d.o - 1) - relOff
-			if relOff < 0 || pos < 0 { // would never happen with a valid input.
+			pos := (d.o - 1) - offset
+			if offset < 0 || pos < 0 { // would never happen with a valid input.
 				d.err = errors.New("lzss: relative offset out of bounds")
 				return
 			}
@@ -206,10 +205,9 @@ func (d *decoder) Close() error {
 // the data read from r.
 // It is the caller's responsibility to call Close on the ReadCloser when
 // finished reading.
-// Whenever ctlFunc and codeFunc are nil, their default replacements are used.
-// See the source code of default functions for more about the format they assume.
-// Threshold can't be smaller than thresholdMin, and is typically 3.
-func NewReader(r io.Reader, order Order, ctlFunc CtlFuncType, codeFunc CodeFuncType, threshold int) io.ReadCloser {
+// Threshold can't be smaller than ThresholdMin, and is typically 3.
+// If you pass DefaultReferenceFunc as referenceFunc, threshold must be set to DefaultThreshold.
+func NewReader(r io.Reader, order Order, flagFunc FlagFuncType, referenceFunc ReferenceFuncType, threshold int) io.ReadCloser {
 	d := new(decoder)
 
 	if order != LSB && order != MSB {
@@ -217,23 +215,20 @@ func NewReader(r io.Reader, order Order, ctlFunc CtlFuncType, codeFunc CodeFuncT
 		return d
 	}
 
-	if ctlFunc == nil {
-		ctlFunc = ctlFuncDefault
-	}
-
-	if codeFunc == nil {
-		codeFunc = codeFuncDefault
+	if flagFunc == nil || referenceFunc == nil {
+		d.err = errors.New("lzss: flagFunc and referenceFunc cannot be nil")
+		return d
 	}
 
 	d.threshold = threshold
-	if threshold < thresholdMin {
+	if threshold < ThresholdMin {
 		d.err = errors.New("lzss: threshold value too small")
 		return d
 	}
 
 	d.order = order
-	d.ctlFunc = ctlFunc
-	d.codeFunc = codeFunc
+	d.flagFunc = flagFunc
+	d.referenceFunc = referenceFunc
 
 	if br, ok := r.(io.ByteReader); ok {
 		d.r = br
@@ -241,9 +236,13 @@ func NewReader(r io.Reader, order Order, ctlFunc CtlFuncType, codeFunc CodeFuncT
 		d.r = bufio.NewReader(r)
 	}
 
-	maxBytes := d.threshold + (1<<SizeWidth - 1) // maximum bytes in a single copy
-	maxDecode := CtlWidth * maxBytes             // maximum bytes output by decode in a single call
+	maxBytes := d.threshold + (1<<NLengthBits - 1) // maximum bytes in a single copy
+	maxDecode := NFlags * maxBytes                 // maximum bytes output by decode in a single call
 	d.output = make([]byte, flushBuffer+maxDecode)
 
 	return d
+}
+
+func NewDefaultReader(r io.Reader, order Order) {
+	return NewReader(r, order, DefaultFlagFunc, DefaultReferenceFunc, DefaultThreshold)
 }
