@@ -163,15 +163,15 @@ func (d *decoder) decode() {
 			}
 			d.o++
 		} else {
-			ref := make([]byte, NReferenceBytes)
+			refBytes := make([]byte, NReferenceBytes)
 
-			for i := 0; i < len(ref); i++ {
-				if ref[i], d.err = d.r.ReadByte(); d.err != nil {
+			for i := 0; i < len(refBytes); i++ {
+				if refBytes[i], d.err = d.r.ReadByte(); d.err != nil {
 					return
 				}
 			}
 
-			n, offset := d.referenceFunc(ref, d.order)
+			n, offset := d.referenceFunc(refBytes, d.order)
 			if n < 0 {
 				d.err = errors.New("lzss: invalid chunk length")
 				return
