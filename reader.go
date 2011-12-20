@@ -29,23 +29,22 @@ const (
 
 // Keep in mind these constraints before modifying the constants defined below.
 //
-// - ctlWidth must be a multiple of 8 in the current implementation.
+// - CtlWidth must be a multiple of 8 in the current implementation.
 //
-// - offsetWidth + sizeWidth should add up to 8*codeSize. This can be easily mitigated to
+// - OffsetWidth + SizeWidth should add up to 8*CodeSize. This can be easily mitigated to
 // "multiple of 8" case by modifying the codeFuncDefault to read
 // more/less than 2 bytes.
 const (
-	ctlWidth    = 8
-	offsetWidth = 12 // number of bits used for relative offset
-	sizeWidth   = 4  // number of bits used for additional chunk (dictionary match) size
-	threshold   = 3  // minimum number of bytes in a chunk
-	codeSize    = 2  // number of bytes used for a code
+	CtlWidth    = 8 // number of control bits
+	OffsetWidth = 12 // number of bits used for relative offset
+	SizeWidth   = 4  // number of bits used for additional chunk (dictionary match) size
+	CodeSize    = 2  // number of bytes used for a code
 )
 
 const (
-	windowSize   = 1 << offsetWidth
+	windowSize   = 1 << OffsetWidth
 	flushBuffer  = 2 * windowSize
-	thresholdMin = codeSize + ctlWidth/8 // Assuming that ctlWidth is a multiple of 8
+	thresholdMin = CodeSize + CtlWidth/8 // Assuming that CtlWidth is a multiple of 8
 )
 
 // CtlFunc takes ctl (control) byte and
@@ -79,7 +78,7 @@ type decoder struct {
 	o      int    // write index into output
 	toRead []byte // bytes to return from Read
 
-	threshold int // threshold
+	threshold int // minimum number of bytes in a chunk
 	ctlFunc   CtlFuncType
 	codeFunc  CodeFuncType
 }
@@ -118,14 +117,13 @@ func codeFuncDefault(b []byte, order Order) (size, relOff int) {
 
 	code := (uint16(hi) << 8) | uint16(lo)
 
-	size = int(code & (1<<sizeWidth - 1))
+	size = int(code & (1<<SizeWidth - 1))
 	relOff = int(code >> 4)
 	return
 }
 
 // decode decompresses bytes from r and leaves them in d.toRead.
 // read specifies how to decode bytes into codes.
-// ctlWidth is the sizeWidth in bits of literal codes.
 func (d *decoder) decode() {
 	defer func() {
 		if d.err == io.EOF {
@@ -148,7 +146,7 @@ func (d *decoder) decode() {
 
 	// optimize a special case of the loop below
 	if ctl == 0 {
-		for i := 0; i < ctlWidth; i++ {
+		for i := 0; i < CtlWidth; i++ {
 			d.output[d.o], d.err = d.r.ReadByte()
 			if d.err != nil {
 				return
@@ -158,7 +156,7 @@ func (d *decoder) decode() {
 		return
 	}
 
-	for i := uint(0); i < ctlWidth; i++ {
+	for i := uint(0); i < CtlWidth; i++ {
 		if d.ctlFunc(ctl, i) {
 			d.output[d.o], d.err = d.r.ReadByte()
 			if d.err != nil {
@@ -166,7 +164,7 @@ func (d *decoder) decode() {
 			}
 			d.o++
 		} else {
-			code := make([]byte, codeSize)
+			code := make([]byte, CodeSize)
 
 			for i := 0; i < len(code); i++ {
 				if code[i], d.err = d.r.ReadByte(); d.err != nil {
@@ -180,7 +178,7 @@ func (d *decoder) decode() {
 				return
 			}
 
-			n += threshold
+			n += d.threshold
 			pos := d.o - relOff - 1
 			if relOff < 0 || pos < 0 { // would never happen with a valid input.
 				d.err = errors.New("lzss: relative offset out of bounds")
@@ -243,8 +241,8 @@ func NewReader(r io.Reader, order Order, ctlFunc CtlFuncType, codeFunc CodeFuncT
 		d.r = bufio.NewReader(r)
 	}
 
-	maxBytes := d.threshold + (1<<sizeWidth - 1) // maximum bytes in a single copy
-	maxDecode := ctlWidth * maxBytes             // maximum bytes output by decode in a single call
+	maxBytes := d.threshold + (1<<SizeWidth - 1) // maximum bytes in a single copy
+	maxDecode := CtlWidth * maxBytes             // maximum bytes output by decode in a single call
 	d.output = make([]byte, flushBuffer+maxDecode)
 
 	return d
