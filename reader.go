@@ -14,8 +14,6 @@
 // The code is based on Go's compress/lzs/reader.go.
 package lzss
 
-// TODO(utkan): make threshold (and in effect, maxBytes and maxDecode) tunable.
-
 import (
 	"bufio"
 	"errors"
@@ -33,7 +31,7 @@ const (
 //
 // - ctlWidth must be a multiple of 8 in the current implementation.
 //
-// - offsetWidth + sizeWidth should add up to 8*codeWidth. This can be easily mitigated to
+// - offsetWidth + sizeWidth should add up to 8*codeSize. This can be easily mitigated to
 // "multiple of 8" case by modifying the codeFuncDefault to read
 // more/less than 2 bytes.
 const (
@@ -45,10 +43,9 @@ const (
 )
 
 const (
-	windowSize  = 1 << offsetWidth
-	flushBuffer = 2 * windowSize
-	maxBytes    = threshold + (1<<sizeWidth - 1) // maximum bytes in a single copy
-	maxDecode   = ctlWidth * maxBytes            // maximum bytes output by decode in a single call
+	windowSize   = 1 << offsetWidth
+	flushBuffer  = 2 * windowSize
+	thresholdMin = codeSize + ctlWidth/8 // Assuming that ctlWidth is a multiple of 8
 )
 
 // CtlFunc takes ctl (control) byte and
@@ -78,12 +75,13 @@ type decoder struct {
 	// Literal codes are accumulated from the start of the buffer.
 	// It is flushed when it contains >= flushBuffer bytes,
 	// so that there is always room to decode an entire code.
-	output [flushBuffer + maxDecode]byte
+	output []byte
 	o      int    // write index into output
 	toRead []byte // bytes to return from Read
 
-	ctlFunc  CtlFuncType
-	codeFunc CodeFuncType
+	threshold int // threshold
+	ctlFunc   CtlFuncType
+	codeFunc  CodeFuncType
 }
 
 func (d *decoder) Read(b []byte) (int, error) {
@@ -212,7 +210,8 @@ func (d *decoder) Close() error {
 // finished reading.
 // Whenever ctlFunc and codeFunc are nil, their default replacements are used.
 // See the source code of default functions for more about the format they assume.
-func NewReader(r io.Reader, order Order, ctlFunc CtlFuncType, codeFunc CodeFuncType) io.ReadCloser {
+// Threshold can't be smaller that thresholdMin, and is typically 3.
+func NewReader(r io.Reader, order Order, ctlFunc CtlFuncType, codeFunc CodeFuncType, threshold int) io.ReadCloser {
 	d := new(decoder)
 
 	if order != LSB && order != MSB {
@@ -228,6 +227,12 @@ func NewReader(r io.Reader, order Order, ctlFunc CtlFuncType, codeFunc CodeFuncT
 		codeFunc = codeFuncDefault
 	}
 
+	d.threshold = threshold
+	if threshold < thresholdMin {
+		d.err = errors.New("lzss: threshold value too small")
+		return d
+	}
+
 	d.order = order
 	d.ctlFunc = ctlFunc
 	d.codeFunc = codeFunc
@@ -237,6 +242,10 @@ func NewReader(r io.Reader, order Order, ctlFunc CtlFuncType, codeFunc CodeFuncT
 	} else {
 		d.r = bufio.NewReader(r)
 	}
+
+	maxBytes := d.threshold + (1<<sizeWidth - 1) // maximum bytes in a single copy
+	maxDecode := ctlWidth * maxBytes             // maximum bytes output by decode in a single call
+	d.output = make([]byte, flushBuffer+maxDecode)
 
 	return d
 }
