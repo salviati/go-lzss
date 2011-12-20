@@ -35,7 +35,7 @@ const (
 // "multiple of 8" case by modifying the codeFuncDefault to read
 // more/less than 2 bytes.
 const (
-	CtlWidth    = 8 // number of control bits
+	CtlWidth    = 8  // number of control bits
 	OffsetWidth = 12 // number of bits used for relative offset
 	SizeWidth   = 4  // number of bits used for additional chunk (dictionary match) size
 	CodeSize    = 2  // number of bytes used for a code
@@ -179,7 +179,7 @@ func (d *decoder) decode() {
 			}
 
 			n += d.threshold
-			pos := d.o - relOff - 1
+			pos := (d.o - 1) - relOff
 			if relOff < 0 || pos < 0 { // would never happen with a valid input.
 				d.err = errors.New("lzss: relative offset out of bounds")
 				return
@@ -208,7 +208,7 @@ func (d *decoder) Close() error {
 // finished reading.
 // Whenever ctlFunc and codeFunc are nil, their default replacements are used.
 // See the source code of default functions for more about the format they assume.
-// Threshold can't be smaller that thresholdMin, and is typically 3.
+// Threshold can't be smaller than thresholdMin, and is typically 3.
 func NewReader(r io.Reader, order Order, ctlFunc CtlFuncType, codeFunc CodeFuncType, threshold int) io.ReadCloser {
 	d := new(decoder)
 
