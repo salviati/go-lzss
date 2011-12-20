@@ -37,7 +37,7 @@ const (
 const (
 	ctlWidth    = 8
 	offsetWidth = 12 // number of bits used for relative offset
-	sizeWidth   = 4  // number of bits used for chunk size
+	sizeWidth   = 4  // number of bits used for chunk (dictionary match) size
 	threshold   = 2
 	codeSize    = 2 // number of bytes used for a code
 )
@@ -99,6 +99,8 @@ func (d *decoder) Read(b []byte) (int, error) {
 	panic("unreachable")
 }
 
+// The default functions use the format compatible with
+// Nintendo GBA's BIOS.
 func ctlFuncDefault(ctl byte, pos uint) (readOne bool) {
 	return ctl<<pos&0x80 == 0
 }
@@ -206,7 +208,8 @@ func (d *decoder) Close() error {
 // the data read from r.
 // It is the caller's responsibility to call Close on the ReadCloser when
 // finished reading.
-// ctlFunc and codeFunc are ordinarily nil.
+// Whenever ctlFunc and codeFunc are nil, their default replacements are used.
+// See the source code of default functions for more about the format they assume.
 func NewReader(r io.Reader, order Order, ctlFunc CtlFuncType, codeFunc CodeFuncType) io.ReadCloser {
 	d := new(decoder)
 
