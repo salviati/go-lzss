@@ -14,6 +14,8 @@
 // The code is based on Go's compress/lzs/reader.go.
 package lzss
 
+// TODO(utkan): make threshold (and in effect, maxBytes and maxDecode) tunable.
+
 import (
 	"bufio"
 	"errors"
@@ -37,16 +39,16 @@ const (
 const (
 	ctlWidth    = 8
 	offsetWidth = 12 // number of bits used for relative offset
-	sizeWidth   = 4  // number of bits used for chunk (dictionary match) size
-	threshold   = 2
-	codeSize    = 2 // number of bytes used for a code
+	sizeWidth   = 4  // number of bits used for additional chunk (dictionary match) size
+	threshold   = 3  // minimum number of bytes in a chunk
+	codeSize    = 2  // number of bytes used for a code
 )
 
 const (
 	windowSize  = 1 << offsetWidth
 	flushBuffer = 2 * windowSize
-	maxBytes    = threshold + 1<<sizeWidth // maximum bytes in a single copy
-	maxDecode   = ctlWidth * maxBytes      // maximum bytes output by decode in a single call
+	maxBytes    = threshold + (1<<sizeWidth - 1) // maximum bytes in a single copy
+	maxDecode   = ctlWidth * maxBytes            // maximum bytes output by decode in a single call
 )
 
 // CtlFunc takes ctl (control) byte and
@@ -61,7 +63,7 @@ type CtlFuncType func(byte, uint) bool
 // from code bytes. Array has the same ordering
 // as the file/stream. Reqested byte ordering is available
 // through parameter.
-// decoder will then copy size + threshold + 1 bytes
+// decoder will then copy size + threshold bytes
 // starting from d.output[d.o-relOff-1].
 // Note that d.output[d.o-1] is the last byte
 // written by the decoder in the previous step.
@@ -118,8 +120,8 @@ func codeFuncDefault(b []byte, order Order) (size, relOff int) {
 
 	code := (uint16(hi) << 8) | uint16(lo)
 
-	size = int(code&(1<<sizeWidth-1))
-	relOff = int(code>>4)
+	size = int(code & (1<<sizeWidth - 1))
+	relOff = int(code >> 4)
 	return
 }
 
@@ -180,7 +182,7 @@ func (d *decoder) decode() {
 				return
 			}
 
-			n += threshold + 1
+			n += threshold
 			pos := d.o - relOff - 1
 			if relOff < 0 || pos < 0 { // would never happen with a valid input.
 				d.err = errors.New("lzss: relative offset out of bounds")
