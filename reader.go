@@ -75,17 +75,10 @@ type decoder struct {
 	output []byte
 	o      int    // write index into output
 	toRead []byte // bytes to return from Read
-	i      int    // number of bytes successfully read from r
 
 	threshold     int // minimum number of bytes in a chunk
 	flagFunc      FlagFuncType
 	referenceFunc ReferenceFuncType
-}
-
-// Returns the number of bytes read from given io.Reader
-// Mostly for debug purposes.
-func (d *decoder) Pos() int {
-	return d.i
 }
 
 func (d *decoder) Read(b []byte) (int, error) {
@@ -149,16 +142,14 @@ func (d *decoder) decode() {
 		d.err = err
 		return
 	}
-	d.i++
 
-	// optimize out a special case of the loop below
+	// optimize a special case of the loop below
 	if flags == 0 {
 		for i := 0; i < NFlags; i++ {
 			d.output[d.o], d.err = d.r.ReadByte()
 			if d.err != nil {
 				return
 			}
-			d.i++
 			d.o++
 		}
 		return
@@ -170,7 +161,6 @@ func (d *decoder) decode() {
 			if d.err != nil {
 				return
 			}
-			d.i++
 			d.o++
 		} else {
 			refBytes := make([]byte, NReferenceBytes)
@@ -179,7 +169,6 @@ func (d *decoder) decode() {
 				if refBytes[i], d.err = d.r.ReadByte(); d.err != nil {
 					return
 				}
-				d.i++
 			}
 
 			n, offset := d.referenceFunc(refBytes, d.order)
