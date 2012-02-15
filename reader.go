@@ -14,6 +14,8 @@
 // The code is based on Go's compress/lzw/reader.go.
 package lzss
 
+// BUG(utkan): The window handling is buggy, producing incorrect output. Do not use this package until it's fixed.
+
 import (
 	"bufio"
 	"errors"
