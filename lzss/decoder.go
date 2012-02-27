@@ -6,7 +6,7 @@
 // data format, described in J. A. Storer, ``Data compression via
 // textual substitution'', Journal of the ACM 29(4) (October 1984),
 // (pp 928-951).
-// It is intended to read legacy data, thus there is no writer.
+// The code is intended to read legacy data only, so there is no encoder.
 package lzss
 
 import (
