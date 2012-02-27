@@ -76,7 +76,7 @@ func DefaultFlagFunc(flags byte, pos uint) (literal bool) {
 }
 
 // Default functions use a format that is compatible with
-// Nintendo GBA's BIOS (for LSB case), except this package assumes no header.
+// Nintendo GBA's BIOS (for MSB case), except this package assumes no header.
 // See http://nocash.emubase.de/gbatek.htm#biosdecompressionfunctions for more.
 func DefaultReferenceFunc(refBytes []byte, order Order) (length, offset int) {
 	var lo, hi byte
