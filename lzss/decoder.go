@@ -33,11 +33,11 @@ const (
 const (
 	NFlags      = 8  // number of sequential flag bits
 	NOffsetBits = 12 // number of bits used for relative offset
-	NLengthBits = 4  // number of bits used to denote the referred chunk length
+	NLengthBits = 4  // number of bits used to denote the referred chunk length, must be smaller than 8.
 )
 
 const (
-	OffsetMask       = 1<<NLengthBits - 1
+	OffsetMask       = 1<<(8-NLengthBits) - 1
 	NReferenceBytes  = (NOffsetBits + NFlags) / 8 // number of total bytes a reference is made of (ie, offset and length pair)
 	ThresholdMin     = NReferenceBytes + NFlags/8
 	DefaultThreshold = ThresholdMin
@@ -145,9 +145,12 @@ func (d *Decoder) Decode(in []byte) ([]byte, error) {
 				}
 
 				if pos+n > len(out) {
-					return append(out, out[pos:]...), ErrChunkLength
+					for j:=pos; j<pos+n; j++ {
+						out = append(out, out[j])
+					}
+				} else {
+					out = append(out, out[pos:pos+n]...)
 				}
-				out = append(out, out[pos:pos+n]...)
 				w += n
 			}
 		}
