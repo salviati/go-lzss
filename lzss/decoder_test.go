@@ -37,7 +37,7 @@ func TestLorem(t *testing.T) {
 	}
 
 	if len(orig) > len(decompr) {
-		t.Log("Decompressed data is smaller that the original data")
+		t.Log("Decompressed data is smaller than the original data")
 	}
 
 	for i := 0; i < len(orig); i++ {
