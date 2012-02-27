@@ -72,7 +72,7 @@ type Decoder struct {
 }
 
 func DefaultFlagFunc(flags byte, pos uint) (literal bool) {
-	return (uint(flags)<<pos)&0x80 == 0
+	return (flags<<pos)&0x80 == 0
 }
 
 // Default functions use a format that is compatible with
