@@ -18,7 +18,7 @@ func NewCustomReader(r io.Reader, order Order, flagFunc FlagFuncType, referenceF
 	}
 
 	out, err := d.Decode(in)
-	return bytes.NewBuffer(out), err
+	return bytes.NewReader(out), err
 }
 
 func NewReader(r io.Reader, order Order) (io.Reader, error) {
