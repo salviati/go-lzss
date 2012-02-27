@@ -2,27 +2,26 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Copyright 2011 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 // Package lzss implements the Lempel-Ziv-Storer-Szymanski compressed
 // data format, described in J. A. Storer, ``Data compression via
 // textual substitution'', Journal of the ACM 29(4) (October 1984),
 // (pp 928-951).
-//
-// The code is based on Go's compress/lzw/reader.go.
+// It is intended to read legacy data, thus there is no writer.
 package lzss
 
-// BUG(utkan): The window handling is buggy, producing incorrect output. Do not use this package until it's fixed.
-
 import (
-	"bufio"
 	"errors"
 	"io"
 )
 
-type Order int
+var (
+	ErrClosed       = errors.New("lzss: reader/writer is closed")
+	ErrChunkLength  = errors.New("lzss: invalid chunk length")
+	ErrOffset       = errors.New("lzss: relative offset out of bounds")
+	ErrOrder        = errors.New("lzss: unknown order")
+	ErrThreshold    = errors.New("lzss: invalid threshold value")
+	ErrNilParameter = errors.New("lzss: required parameter cannot be nil")
+)
 
 const (
 	LSB Order = iota
@@ -38,15 +37,13 @@ const (
 )
 
 const (
+	OffsetMask       = 1<<NLengthBits - 1
 	NReferenceBytes  = (NOffsetBits + NFlags) / 8 // number of total bytes a reference is made of (ie, offset and length pair)
 	ThresholdMin     = NReferenceBytes + NFlags/8
 	DefaultThreshold = ThresholdMin
 )
 
-const (
-	windowLength = 1 << NOffsetBits
-	flushBuffer  = 2 * windowLength
-)
+type Order int
 
 // FlagFunc takes the bit-vector of sequential flags and
 // pos (number of flags used up until now) as parameters.
@@ -67,39 +64,15 @@ type FlagFuncType func(byte, uint) bool
 // See decode in the source file for details.
 type ReferenceFuncType func([]byte, Order) (int, int)
 
-type decoder struct {
-	r     io.ByteReader
-	order Order
-	err   error
-	// output is the temporary output buffer.
-	// It is flushed when it contains >= flushBuffer bytes,
-	// so that there is always room to decode an entire code.
-	output []byte
-	o      int    // write index into output
-	toRead []byte // bytes to return from Read
-
+type Decoder struct {
+	order         Order
 	threshold     int // minimum number of bytes in a chunk
 	flagFunc      FlagFuncType
 	referenceFunc ReferenceFuncType
 }
 
-func (d *decoder) Read(b []byte) (int, error) {
-	for {
-		if len(d.toRead) > 0 {
-			n := copy(b, d.toRead)
-			d.toRead = d.toRead[n:]
-			return n, nil
-		}
-		if d.err != nil {
-			return 0, d.err
-		}
-		d.decode()
-	}
-	panic("unreachable")
-}
-
 func DefaultFlagFunc(flags byte, pos uint) (literal bool) {
-	return flags<<pos&0x80 == 0
+	return (uint(flags)<<pos)&0x80 == 0
 }
 
 // Default functions use a format that is compatible with
@@ -116,91 +89,75 @@ func DefaultReferenceFunc(refBytes []byte, order Order) (length, offset int) {
 		lo = refBytes[1]
 	}
 
-	ref := (uint16(hi) << 8) | uint16(lo)
-
-	length = int(ref & (1<<NLengthBits - 1))
-	offset = int(ref >> NLengthBits)
+	offset = int((uint16(hi&OffsetMask) << 8) | uint16(lo))
+	length = int(hi >> NLengthBits)
 	return
 }
 
 // decode decompresses bytes from r and leaves them in d.toRead.
 // read specifies how to decode bytes into codes.
-func (d *decoder) decode() {
-	defer func() {
-		if d.err == io.EOF {
-			d.err = io.ErrUnexpectedEOF
-		}
-		if d.o >= flushBuffer || d.err != nil {
-			d.flush()
-		}
-	}()
+func (d *Decoder) Decode(in []byte) ([]byte, error) {
+	out := make([]byte, 0)
+	l := len(in)
+	r := 0
+	w := 0
 
-	flags, err := d.r.ReadByte()
-	if err == io.EOF {
-		d.flush()
-		return
-	}
-	if d.err != nil {
-		d.err = err
-		return
-	}
+	for r < l {
+		flags := in[r]
+		r++
 
-	// optimize a special case of the loop below
-	if flags == 0 {
-		for i := 0; i < NFlags; i++ {
-			d.output[d.o], d.err = d.r.ReadByte()
-			if d.err != nil {
-				return
+		// optimize a special case of the loop below
+		if flags == 0 {
+			if r+NFlags > l {
+				return append(out, in[r:]...), io.ErrUnexpectedEOF
 			}
-			d.o++
+
+			out = append(out, in[r:r+NFlags]...)
+			r += NFlags
+			w += NFlags
+			continue
 		}
-		return
-	}
 
-	for i := uint(0); i < NFlags; i++ {
-		if d.flagFunc(flags, i) {
-			d.output[d.o], d.err = d.r.ReadByte()
-			if d.err != nil {
-				return
-			}
-			d.o++
-		} else {
-			refBytes := make([]byte, NReferenceBytes)
-
-			for i := 0; i < len(refBytes); i++ {
-				if refBytes[i], d.err = d.r.ReadByte(); d.err != nil {
-					return
+		for i := uint(0); i < NFlags; i++ {
+			if d.flagFunc(flags, i) {
+				if r >= l {
+					return out, io.ErrUnexpectedEOF
 				}
-			}
+				out = append(out, in[r])
+				r++
+				w++
+			} else {
+				if r+NReferenceBytes > l {
+					return out, io.ErrUnexpectedEOF
+				}
+				refBytes := in[r : r+NReferenceBytes]
+				r += NReferenceBytes
 
-			n, offset := d.referenceFunc(refBytes, d.order)
-			if n < 0 {
-				d.err = errors.New("lzss: invalid chunk length")
-				return
-			}
+				n, offset := d.referenceFunc(refBytes, d.order)
+				if n < 0 {
+					return out, ErrChunkLength
+				}
 
-			n += d.threshold
-			pos := (d.o - 1) - offset
-			if offset < 0 || pos < 0 { // would never happen with a valid input.
-				d.err = errors.New("lzss: relative offset out of bounds")
-				return
+				n += d.threshold
+				pos := (w - 1) - offset
+				if offset < 0 || pos < 0 { // would never happen with a valid input.
+					return out, ErrOffset
+				}
+
+				if pos+n > len(out) {
+					return append(out, out[pos:]...), ErrChunkLength
+				}
+				out = append(out, out[pos:pos+n]...)
+				w += n
 			}
-			copy(d.output[d.o:d.o+n], d.output[pos:pos+n])
-			d.o += n
 		}
+
 	}
+	return out, nil
 }
 
-func (d *decoder) flush() {
-	d.toRead = d.output[:d.o]
-	d.o = 0
-}
-
-var errClosed = errors.New("lzss: reader/writer is closed")
-
-func (d *decoder) Close() error {
-	d.err = errClosed // in case any Reads come along
-	return nil
+func (d *Decoder) Close() error {
+	return ErrClosed
 }
 
 // NewReader creates a new io.ReadCloser that satisfies reads by decompressing
@@ -209,42 +166,29 @@ func (d *decoder) Close() error {
 // finished reading.
 // Threshold can't be smaller than ThresholdMin, and is typically 3.
 // If you pass DefaultReferenceFunc as referenceFunc, threshold must be set to DefaultThreshold.
-func NewCustomReader(r io.Reader, order Order, flagFunc FlagFuncType, referenceFunc ReferenceFuncType, threshold int) io.ReadCloser {
-	d := new(decoder)
+func NewCustomDecoder(order Order, flagFunc FlagFuncType, referenceFunc ReferenceFuncType, threshold int) (*Decoder, error) {
+	d := new(Decoder)
 
 	if order != LSB && order != MSB {
-		d.err = errors.New("lzss: unknown order")
-		return d
+		return nil, ErrOrder
 	}
 
 	if flagFunc == nil || referenceFunc == nil {
-		d.err = errors.New("lzss: flagFunc and referenceFunc cannot be nil")
-		return d
+		return nil, ErrNilParameter
 	}
 
 	d.threshold = threshold
 	if threshold < ThresholdMin {
-		d.err = errors.New("lzss: threshold value too small")
-		return d
+		return nil, ErrThreshold
 	}
 
 	d.order = order
 	d.flagFunc = flagFunc
 	d.referenceFunc = referenceFunc
 
-	if br, ok := r.(io.ByteReader); ok {
-		d.r = br
-	} else {
-		d.r = bufio.NewReader(r)
-	}
-
-	maxBytes := d.threshold + (1<<NLengthBits - 1) // maximum bytes in a single copy
-	maxDecode := NFlags * maxBytes                 // maximum bytes output by decode in a single call
-	d.output = make([]byte, flushBuffer+maxDecode)
-
-	return d
+	return d, nil
 }
 
-func NewReader(r io.Reader, order Order) io.ReadCloser {
-	return NewCustomReader(r, order, DefaultFlagFunc, DefaultReferenceFunc, DefaultThreshold)
+func NewDecoder(order Order) (*Decoder, error) {
+	return NewCustomDecoder(order, DefaultFlagFunc, DefaultReferenceFunc, DefaultThreshold)
 }
